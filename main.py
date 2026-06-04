@@ -632,19 +632,6 @@ class Tab3_HyundaiHDS(QWidget):
         pl = QVBoxLayout(parse_grp)
         pl.setSpacing(6)
 
-        memo_row = QHBoxLayout()
-        memo_row.addWidget(QLabel("파일명 구조 메모:"))
-        self.memo_edit = QLineEdit(
-            "약어(0) _ 보관일자(1) _ 서식코드(2) _ 증권번호(3) _ 서식코드(4) _ 순번(5) _ IMG _ 이미지명 _ 순번"
-        )
-        self.memo_edit.setToolTip("참고용 메모입니다. 파싱에 영향을 주지 않습니다.")
-        memo_row.addWidget(self.memo_edit)
-        btn_reset_cfg = QPushButton("↺  초기화")
-        btn_reset_cfg.setFixedWidth(84)
-        btn_reset_cfg.clicked.connect(self._reset_settings)
-        memo_row.addWidget(btn_reset_cfg)
-        pl.addLayout(memo_row)
-
         idx_row = QHBoxLayout()
         idx_row.addWidget(QLabel("구분자:"))
         self.delim_edit = QLineEdit("_")
@@ -683,6 +670,10 @@ class Tab3_HyundaiHDS(QWidget):
         )
         idx_row.addWidget(self.detail_spin)
         idx_row.addStretch()
+        btn_reset_cfg = QPushButton("↺  초기화")
+        btn_reset_cfg.setFixedWidth(84)
+        btn_reset_cfg.clicked.connect(self._reset_settings)
+        idx_row.addWidget(btn_reset_cfg)
         pl.addLayout(idx_row)
 
         sort_row = QHBoxLayout()
@@ -886,9 +877,6 @@ class Tab3_HyundaiHDS(QWidget):
             self.table.item(i, 0).setText(str(i + 1))
 
     def _reset_settings(self):
-        self.memo_edit.setText(
-            "약어(0) _ 보관일자(1) _ 서식코드(2) _ 증권번호(3) _ 서식코드(4) _ 순번(5) _ IMG _ 이미지명 _ 순번"
-        )
         self.delim_edit.setText("_")
         self.group_spin.setValue(3)
         self.detail_spin.setValue(4)
