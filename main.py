@@ -1,5 +1,6 @@
 import sys
 import os
+import re
 from io import BytesIO
 from pathlib import Path
 from collections import defaultdict
@@ -89,6 +90,18 @@ def _init_arrows() -> None:
                 path = os.path.join(arrow_dir, f'arrow_{direction}_{name}.png')
                 _make(direction, rgb, path)
                 _ARROW[f'{direction}_{name}'] = path.replace('\\', '/')
+
+        # 체크마크 이미지 (흰색 √ — checked 상태 accent 배경 위에 표시)
+        def _make_check(path: str) -> None:
+            w, h = 14, 14
+            img = Image.new('RGBA', (w, h), (0, 0, 0, 0))
+            draw = ImageDraw.Draw(img)
+            draw.line([(2, 7), (5, 11), (12, 3)], fill=(255, 255, 255, 255), width=2)
+            img.save(path)
+
+        check_path = os.path.join(arrow_dir, 'check.png')
+        _make_check(check_path)
+        _ARROW['check'] = check_path.replace('\\', '/')
     except Exception:
         pass  # 실패 시 화살표 없이 진행 (버튼 동작은 유지)
 
@@ -180,6 +193,20 @@ def build_stylesheet(t: dict) -> str:
     QPushButton:hover  {{ background: {t['hover']}; }}
     QPushButton:disabled {{ background: {t['bg']}; color: {t['border2']}; }}
     QCheckBox {{ color: {t['text_dim']}; }}
+    QCheckBox::indicator {{
+        width: 14px; height: 14px;
+        border: 1.5px solid {t['border2']};
+        border-radius: 3px;
+        background: {t['bg2']};
+    }}
+    QCheckBox::indicator:hover {{
+        border-color: {t['accent']};
+    }}
+    QCheckBox::indicator:checked {{
+        background: {t['accent']};
+        border-color: {t['accent']};
+        image: url({_ARROW.get('check', '')});
+    }}
     QLabel    {{ color: {t['text_dim']}; }}
     QTableWidget, QListWidget {{
         background: {t['bg_list']}; color: {t['text']};
@@ -229,6 +256,10 @@ def build_stylesheet(t: dict) -> str:
     QLabel#info_label {{
         background: {t['info_bg']}; color: {t['info_text']};
         padding: 10px; border-radius: 6px;
+    }}
+    QLabel#example_result {{
+        background: {t['bg2']}; border: 1px solid {t['border2']};
+        border-radius: 6px; padding: 8px;
     }}
 
     QPushButton#run_btn {{
@@ -644,6 +675,16 @@ class Tab3_HyundaiHDS(QWidget):
             "    [0]AA  [1]20240101  [2]FC01  [3]123456789  [4]FC02  [5]003"
         )
         idx_row.addWidget(self.delim_edit)
+        self.chk_strip = QCheckBox("공백 포함")
+        self.chk_strip.setChecked(False)
+        self.chk_strip.setToolTip(
+            "체크: 구분자 문자와 공백(띄어쓰기) 모두를 구분자로 사용합니다.\n"
+            "체크 해제(기본): 구분자 문자만 사용합니다.\n\n"
+            "예) '스크린샷 2025-04-06 152558' 을 '-' 로 분리 시\n"
+            "  체크 → [0]스크린샷  [1]2025  [2]04  [3]06  [4]152558\n"
+            "  해제 → [0]스크린샷 2025  [1]04  [2]06 152558"
+        )
+        idx_row.addWidget(self.chk_strip)
         idx_row.addSpacing(16)
         idx_row.addWidget(QLabel("그룹 기준 인덱스:"))
         self.group_spin = QSpinBox()
@@ -726,12 +767,15 @@ class Tab3_HyundaiHDS(QWidget):
         pl.addLayout(ex_row)
 
         self.example_result = QLabel()
+        self.example_result.setObjectName("example_result")
         self.example_result.setTextFormat(Qt.TextFormat.RichText)
         self.example_result.setWordWrap(True)
+        self.example_result.setMinimumHeight(72)
         pl.addWidget(self.example_result)
 
         self.delim_edit.textChanged.connect(self._update_example)
         self.example_edit.textChanged.connect(self._update_example)
+        self.chk_strip.stateChanged.connect(self._update_example)
         for sp in (self.group_spin, self.detail_spin, self.sort1_spin, self.sort2_spin):
             sp.valueChanged.connect(self._update_example)
         self._update_example()
@@ -878,6 +922,7 @@ class Tab3_HyundaiHDS(QWidget):
 
     def _reset_settings(self):
         self.delim_edit.setText("_")
+        self.chk_strip.setChecked(False)
         self.group_spin.setValue(3)
         self.detail_spin.setValue(4)
         self.sort1_spin.setValue(4)
@@ -924,7 +969,10 @@ class Tab3_HyundaiHDS(QWidget):
     # ── 헬퍼 ──────────────────────────────────────────────────────
     def _extract(self, path: str) -> dict:
         delim = self.delim_edit.text() or '_'
-        parts = Path(path).stem.split(delim)
+        stem  = Path(path).stem
+        parts = (re.split(r'[' + re.escape(delim) + r'\s]+', stem)
+                 if self.chk_strip.isChecked()
+                 else stem.split(delim))
 
         def get(idx: int) -> str:
             return parts[idx] if 0 <= idx < len(parts) else ''
@@ -950,43 +998,56 @@ class Tab3_HyundaiHDS(QWidget):
             return
 
         delim  = self.delim_edit.text() or '_'
-        parts  = filename.split(delim)
+        parts  = (re.split(r'[' + re.escape(delim) + r'\s]+', filename)
+                  if self.chk_strip.isChecked()
+                  else filename.split(delim))
         g_idx  = self.group_spin.value()
         d_idx  = self.detail_spin.value()
         s1_idx = self.sort1_spin.value()
         s2_idx = self.sort2_spin.value()
 
-        role_map: dict[int, list[str]] = {}
-        for idx, label in [(g_idx, '그룹'), (d_idx, '상세'), (s1_idx, '정렬1'), (s2_idx, '정렬2')]:
-            if idx >= 0:
-                role_map.setdefault(idx, []).append(label)
-
-        split_parts = []
-        for i, p in enumerate(parts[:10]):
-            roles = role_map.get(i, [])
-            if roles:
-                split_parts.append(f'<b>[{i}]&nbsp;{p}</b>({",".join(roles)})')
-            else:
-                split_parts.append(f'[{i}]&nbsp;{p}')
-        if len(parts) > 10:
-            split_parts.append('…')
-
-        def val(idx: int) -> str:
+        def val_html(idx: int) -> str:
             if idx < 0:
-                return '(미사용)'
-            return f'<b>{parts[idx]}</b>' if idx < len(parts) else '<i>⚠&nbsp;범위&nbsp;초과</i>'
+                return '<font color="#999999"><i>미사용</i></font>'
+            if idx >= len(parts):
+                return '<font color="#cc4444"><b>⚠ 범위 초과</b></font>'
+            return f'<b>{parts[idx]}</b>'
 
-        result_html = (
-            '&nbsp;·&nbsp;'.join(split_parts)
-            + '<br>→&nbsp;&nbsp;'
-            + '&nbsp;&nbsp;|&nbsp;&nbsp;'.join([
-                f'그룹&nbsp;키({g_idx}):&nbsp;{val(g_idx)}',
-                f'상세({d_idx}):&nbsp;{val(d_idx)}',
-                f'정렬1({s1_idx}):&nbsp;{val(s1_idx)}',
-                f'정렬2({s2_idx}):&nbsp;{val(s2_idx)}',
-            ])
+        # ── 결과 테이블 ───────────────────────────────────────────
+        rows = [
+            ('그룹&nbsp;키', g_idx,  val_html(g_idx)),
+            ('상&nbsp;&nbsp;&nbsp;세', d_idx,  val_html(d_idx)),
+            ('정&nbsp;렬&nbsp;1',  s1_idx, val_html(s1_idx)),
+            ('정&nbsp;렬&nbsp;2',  s2_idx, val_html(s2_idx)),
+        ]
+        tbl = '<table cellspacing="0" cellpadding="2">'
+        for label, idx, value in rows:
+            idx_s = (f'<font color="#6688aa">[{idx}]</font>'
+                     if idx >= 0 else '<font color="#bbbbbb">&nbsp;—&nbsp;</font>')
+            tbl += (f'<tr>'
+                    f'<td width="58"><font color="#888888">{label}</font></td>'
+                    f'<td width="32">{idx_s}</td>'
+                    f'<td><font color="#888888">→&nbsp;</font>{value}</td>'
+                    f'</tr>')
+        tbl += '</table>'
+
+        # ── 파일명 분리 표시 ──────────────────────────────────────
+        active = {i for i in [g_idx, d_idx, s1_idx, s2_idx] if i >= 0}
+        chips = []
+        for i, p in enumerate(parts[:12]):
+            if i in active:
+                chips.append(f'<b><font color="#2e6da4">[{i}]</font>&nbsp;{p}</b>')
+            else:
+                chips.append(f'<font color="#aaaaaa">[{i}]&nbsp;{p}</font>')
+        if len(parts) > 12:
+            chips.append('<font color="#aaaaaa">…</font>')
+
+        parts_line = (
+            '<font color="#aaaaaa"><small>분리:&nbsp;&nbsp;</small></font>'
+            + '&nbsp;&nbsp;'.join(chips)
         )
-        self.example_result.setText(result_html)
+
+        self.example_result.setText(tbl + '<br>' + parts_line)
 
     def _get_groups(self) -> dict[str, list[str]]:
         groups: dict[str, list] = defaultdict(list)
