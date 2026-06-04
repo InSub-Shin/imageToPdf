@@ -816,6 +816,7 @@ class Tab3_HyundaiHDS(QWidget):
 
     # ── 파일 관리 ──────────────────────────────────────────────────
     def _add_images(self, paths: list[str]):
+        is_first = len(self.image_paths) == 0
         for p in paths:
             if p not in self.image_paths:
                 self.image_paths.append(p)
@@ -825,6 +826,9 @@ class Tab3_HyundaiHDS(QWidget):
                 num_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
                 self.table.setItem(row, 0, num_item)
                 self.table.setItem(row, 1, QTableWidgetItem(os.path.basename(p)))
+        # 1번 파일 기준으로 파일명 예시 자동 갱신
+        if is_first and self.image_paths:
+            self.example_edit.setText(Path(self.image_paths[0]).stem)
 
     def _browse_files(self):
         files, _ = QFileDialog.getOpenFileNames(self, "이미지 선택", "",
@@ -1052,180 +1056,6 @@ class Tab3_HyundaiHDS(QWidget):
             f"{len(results)}개 PDF 생성 완료!\n저장 위치: {self.out_dir_edit.text()}")
 
 
-# ── 탭 3 : 현대HDS 전용 (고정 파싱) ─────────────────────────────
-class Tab3_HDS_Fixed(QWidget):
-    """
-    파일명: 약어_보관일자_서식코드_증권번호_서식코드_순번_IMG_이미지명_순번.TIF
-    그룹: 증권번호(idx=3) / 정렬: 서식코드(idx=4) ASC → 순번(idx=5) ASC
-    """
-    def __init__(self):
-        super().__init__()
-        self._files: list[str] = []
-        self._build_ui()
-
-    def _build_ui(self):
-        layout = QVBoxLayout(self)
-        layout.setSpacing(8)
-
-        info = QLabel(
-            "📋  장기계약팀 전용  |  파일명 구조: "
-            "약어 _ 보관일자 _ 서식코드 _ <b>증권번호</b> _ 서식코드 _ 순번 _ IMG _ 이미지명 _ 순번 .TIF<br>"
-            "같은 <b>증권번호</b>끼리 묶고, <b>서식코드 ASC → 순번 ASC</b> 순으로 정렬하여 PDF 생성"
-        )
-        info.setObjectName("info_label")
-        info.setTextFormat(Qt.TextFormat.RichText)
-        info.setWordWrap(True)
-        layout.addWidget(info)
-
-        grp = QGroupBox("폴더 선택")
-        gl = QHBoxLayout(grp)
-        self.folder_edit = QLineEdit()
-        self.folder_edit.setPlaceholderText("TIF 파일이 들어있는 폴더")
-        gl.addWidget(self.folder_edit)
-        btn = QPushButton("찾아보기")
-        btn.clicked.connect(self._browse)
-        gl.addWidget(btn)
-        self.chk_recursive = QCheckBox("하위 폴더 포함")
-        gl.addWidget(self.chk_recursive)
-        btn_scan = QPushButton("스캔")
-        btn_scan.clicked.connect(self._scan)
-        gl.addWidget(btn_scan)
-        btn_reset = QPushButton("↺  초기화")
-        btn_reset.clicked.connect(self._reset)
-        gl.addWidget(btn_reset)
-        layout.addWidget(grp)
-
-        prev_grp = QGroupBox("증권번호별 그룹 미리보기")
-        pl = QVBoxLayout(prev_grp)
-        self.preview_table = QTableWidget(0, 4)
-        self.preview_table.setHorizontalHeaderLabels(["증권번호", "파일 수", "서식코드 목록", "출력 PDF명"])
-        self.preview_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
-        self.preview_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
-        pl.addWidget(self.preview_table)
-        btn_prev = QPushButton("🔍 미리보기")
-        btn_prev.clicked.connect(self._preview)
-        pl.addWidget(btn_prev)
-        layout.addWidget(prev_grp)
-
-        out_grp = QGroupBox("출력 설정")
-        ol = QHBoxLayout(out_grp)
-        ol.addWidget(QLabel("저장 위치:"))
-        self.out_dir_edit = QLineEdit(str(Path.home() / "Downloads"))
-        ol.addWidget(self.out_dir_edit)
-        btn_out = QPushButton("…")
-        btn_out.setFixedWidth(30)
-        btn_out.clicked.connect(self._browse_out)
-        ol.addWidget(btn_out)
-        ol.addSpacing(20)
-        ol.addWidget(QLabel("PDF 파일명:"))
-        self.name_combo = QComboBox()
-        self.name_combo.addItems(["증권번호", "증권번호_서식코드목록"])
-        ol.addWidget(self.name_combo)
-        layout.addWidget(out_grp)
-
-        self.progress = QProgressBar()
-        self.progress.setVisible(False)
-        layout.addWidget(self.progress)
-
-        self.btn_run = QPushButton("▶  증권번호별 PDF 일괄 생성")
-        self.btn_run.setObjectName("run_btn_green")
-        self.btn_run.setFixedHeight(42)
-        self.btn_run.clicked.connect(self._run)
-        layout.addWidget(self.btn_run)
-
-    def _browse(self):
-        d = QFileDialog.getExistingDirectory(self, "폴더 선택")
-        if d:
-            self.folder_edit.setText(d)
-
-    def _browse_out(self):
-        d = QFileDialog.getExistingDirectory(self, "저장 폴더 선택")
-        if d:
-            self.out_dir_edit.setText(d)
-
-    def _scan(self):
-        folder = self.folder_edit.text().strip()
-        if not folder or not os.path.isdir(folder):
-            QMessageBox.warning(self, "경고", "유효한 폴더를 선택하세요.")
-            return
-        exts = {'.tif', '.tiff'}
-        if self.chk_recursive.isChecked():
-            self._files = [str(p) for p in Path(folder).rglob('*') if p.suffix.lower() in exts]
-        else:
-            self._files = [str(p) for p in Path(folder).iterdir() if p.suffix.lower() in exts]
-        QMessageBox.information(self, "스캔 완료", f"{len(self._files)}개 TIF 파일 발견")
-
-    def _reset(self):
-        self.folder_edit.clear()
-        self._files.clear()
-        self.preview_table.setRowCount(0)
-
-    def _parse(self, path: str):
-        parts = Path(path).stem.split('_')
-        policy_no = parts[3] if len(parts) > 3 else ''
-        form_code = parts[4] if len(parts) > 4 else ''
-        seq       = parts[5] if len(parts) > 5 else ''
-        try: seq_int = int(seq)
-        except: seq_int = 0
-        return policy_no, form_code, seq_int
-
-    def _get_groups(self) -> dict[str, list[str]]:
-        groups: dict[str, list] = defaultdict(list)
-        for f in self._files:
-            policy_no, _, _ = self._parse(f)
-            if policy_no:
-                groups[policy_no].append(f)
-        for key in groups:
-            groups[key].sort(key=lambda f: (self._parse(f)[1], self._parse(f)[2]))
-        return dict(groups)
-
-    def _preview(self):
-        if not self._files:
-            QMessageBox.warning(self, "경고", "먼저 폴더를 스캔하세요.")
-            return
-        groups = self._get_groups()
-        self.preview_table.setRowCount(0)
-        for policy_no, files in sorted(groups.items()):
-            form_codes = sorted({self._parse(f)[1] for f in files})
-            row = self.preview_table.rowCount()
-            self.preview_table.insertRow(row)
-            self.preview_table.setItem(row, 0, QTableWidgetItem(policy_no))
-            self.preview_table.setItem(row, 1, QTableWidgetItem(str(len(files))))
-            self.preview_table.setItem(row, 2, QTableWidgetItem(", ".join(form_codes)))
-            self.preview_table.setItem(row, 3, QTableWidgetItem(f"{policy_no}.pdf"))
-
-    def _run(self):
-        if not self._files:
-            QMessageBox.warning(self, "경고", "먼저 폴더를 스캔하세요.")
-            return
-        groups = self._get_groups()
-        out_dir = self.out_dir_edit.text().strip()
-        use_form = self.name_combo.currentIndex() == 1
-
-        jobs = []
-        for policy_no, files in groups.items():
-            if use_form:
-                form_codes = sorted({self._parse(f)[1] for f in files})
-                pdf_name = f"{policy_no}_{'_'.join(form_codes)}.pdf"
-            else:
-                pdf_name = f"{policy_no}.pdf"
-            jobs.append((files, os.path.join(out_dir, pdf_name)))
-
-        self.btn_run.setEnabled(False)
-        self.progress.setVisible(True)
-        self.progress.setRange(0, len(jobs))
-
-        self._worker = PdfWorker(jobs)
-        self._worker.progress.connect(lambda c, _t: self.progress.setValue(c))
-        self._worker.done.connect(self._on_done)
-        self._worker.error.connect(lambda e: QMessageBox.critical(self, "오류", e))
-        self._worker.start()
-
-    def _on_done(self, results: list):
-        self.btn_run.setEnabled(True)
-        self.progress.setVisible(False)
-        QMessageBox.information(self, "완료",
-            f"{len(results)}개 PDF 생성 완료!\n저장 위치: {self.out_dir_edit.text()}")
 
 
 # ── 메인 윈도우 ──────────────────────────────────────────────────
@@ -1240,7 +1070,6 @@ class MainWindow(QMainWindow):
         self._tabs.setTabPosition(QTabWidget.TabPosition.North)
         self._tabs.addTab(Tab1_DragDrop(),    "🖼  드래그 & 드롭")
         self._tabs.addTab(Tab3_HyundaiHDS(), "⚙  커스텀 파싱")
-        self._tabs.addTab(Tab3_HDS_Fixed(),  "🏢  장기계약팀 전용")
         self.setCentralWidget(self._tabs)
 
         self._theme_btn = QPushButton("🌙  다크 모드")
